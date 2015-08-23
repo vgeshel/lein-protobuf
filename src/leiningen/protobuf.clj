@@ -21,14 +21,21 @@
 (defn srcdir [project]
   (io/file cache (str "protobuf-" (version project))))
 
-(defn protoc [project]
-  (io/file (srcdir project) "src" "protoc"))
+(defn protoc
+  "If the user has protobuf installed, she can specify the location of protoc in project. Otherwise we will download and build it and store it in leiningen cache."
+  [project]
+  (or (when-let [path (:protoc project)]
+        (io/file path))
+      (io/file (srcdir project) "src" "protoc")))
 
 (defn url [project]
   (java.net.URL.
-   (format "https://github.com/google/protobuf/releases/download/v%s/protobuf-%s.zip"
-     (version project)
-     (version project))))
+   (format "https://github.com/google/protobuf/releases/download/v%s/protobuf%s-%s.zip"
+           (version project)
+           (if (neg? (compare "3" (version project)))
+             "-java"
+             "")
+           (version project))))
 
 (defn proto-path [project]
   (io/file (get project :proto-path "resources/proto")))
@@ -116,7 +123,9 @@
      (let [target     (target project)
            class-dest (io/file target "classes")
            proto-dest (io/file target "proto")
-           proto-path (proto-path project)]
+           proto-path (proto-path project)
+           protoc-path (.getPath (protoc project))
+           protoc-parent (fs/parent (protoc project))]
        (when (or (> (modtime proto-path) (modtime dest))
                  (> (modtime proto-path) (modtime class-dest)))
          (binding [*compile-protobuf?* false]
@@ -126,10 +135,10 @@
            (.mkdirs dest)
            (extract-dependencies project proto-path protos proto-dest)
            (doseq [proto protos]
-             (let [args (into [(.getPath (protoc project)) proto
+             (let [args (into [protoc-path proto
                                (str "--java_out=" (.getAbsoluteFile dest)) "-I."]
                               (map #(str "-I" (.getAbsoluteFile %))
-                                   [proto-dest proto-path]))]
+                                   [proto-dest proto-path protoc-parent]))]
                (println " > " (join " " args))
                (let [result (apply sh/proc (concat args [:dir proto-path]))]
                  (when-not (= (sh/exit-code result) 0)
